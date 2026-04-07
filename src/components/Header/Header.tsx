@@ -23,8 +23,12 @@ export const Header: FC<HeaderProps> = ({ isDark, onToggleTheme }) => {
         </a>
 
         <nav className={styles.nav}>
-          <a href="#features" className={styles.navLink}>Features</a>
-          <a href="#about" className={styles.navLink}>About</a>
+          <a href="#features" className={styles.navLink}>
+            Features
+          </a>
+          <a href="#about" className={styles.navLink}>
+            About
+          </a>
           <a
             href="https://github.com"
             target="_blank"
