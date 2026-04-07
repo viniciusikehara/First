@@ -1,214 +1,305 @@
-import { useState } from 'react';
+import { useReducer } from 'react';
 import { motion } from 'framer-motion';
 
-import { cn } from '@/utils/cn';
+import type { FC } from 'react';
 import styles from './Calculator.module.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ButtonKind = 'number' | 'operator' | 'clear' | 'equals';
+type Operator = '+' | '−' | '×' | '÷';
 
-interface CalcButton {
-  label: string;
-  value: string;
-  kind: ButtonKind;
-  /** Aria-label override for symbol buttons */
-  ariaLabel?: string;
+interface CalcState {
+  display: string;
+  prev: string;
+  operator: Operator | null;
+  waitingForOperand: boolean;
+  hasResult: boolean;
 }
 
-// ─── Button definitions (row-major, 4 × 4) ───────────────────────────────────
-
-const BUTTONS: CalcButton[] = [
-  { label: '7', value: '7', kind: 'number' },
-  { label: '8', value: '8', kind: 'number' },
-  { label: '9', value: '9', kind: 'number' },
-  { label: '÷', value: '÷', kind: 'operator', ariaLabel: 'divide' },
-
-  { label: '4', value: '4', kind: 'number' },
-  { label: '5', value: '5', kind: 'number' },
-  { label: '6', value: '6', kind: 'number' },
-  { label: '×', value: '×', kind: 'operator', ariaLabel: 'multiply' },
-
-  { label: '1', value: '1', kind: 'number' },
-  { label: '2', value: '2', kind: 'number' },
-  { label: '3', value: '3', kind: 'number' },
-  { label: '−', value: '−', kind: 'operator', ariaLabel: 'subtract' },
-
-  { label: 'AC', value: 'AC', kind: 'clear', ariaLabel: 'clear' },
-  { label: '0', value: '0', kind: 'number' },
-  { label: '=', value: '=', kind: 'equals', ariaLabel: 'equals' },
-  { label: '+', value: '+', kind: 'operator', ariaLabel: 'add' },
-];
+type CalcAction =
+  | { type: 'DIGIT'; payload: string }
+  | { type: 'DECIMAL' }
+  | { type: 'OPERATOR'; payload: Operator }
+  | { type: 'EQUALS' }
+  | { type: 'CLEAR' }
+  | { type: 'TOGGLE_SIGN' }
+  | { type: 'PERCENT' }
+  | { type: 'BACKSPACE' };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const OPERATORS = new Set(['÷', '×', '−', '+']);
+const MAX_DISPLAY_DIGITS = 12;
 
-/** Evaluate an expression string that uses ÷ × − as operator symbols. */
-function evaluate(expression: string): string {
-  // Replace display operators with JS equivalents
-  const normalised = expression
-    .replace(/÷/g, '/')
-    .replace(/×/g, '*')
-    .replace(/−/g, '-');
-
-  try {
-    // eslint-disable-next-line no-new-func
-    const result = new Function(`return (${normalised})`)() as number;
-    if (!isFinite(result)) return 'Error';
-    // Trim floating-point noise (e.g. 0.1 + 0.2 → 0.3)
-    return String(parseFloat(result.toPrecision(12)));
-  } catch {
-    return 'Error';
+function applyOperator(a: number, b: number, op: Operator): number {
+  switch (op) {
+    case '+':
+      return a + b;
+    case '−':
+      return a - b;
+    case '×':
+      return a * b;
+    case '÷':
+      return b !== 0 ? a / b : NaN;
   }
 }
 
-// ─── Animation variants ───────────────────────────────────────────────────────
+function formatResult(value: number): string {
+  if (!isFinite(value)) return 'Error';
+  if (isNaN(value)) return 'Error';
 
-const containerVariants = {
-  hidden: { opacity: 0, scale: 0.92, y: 32 },
-  visible: {
-    opacity: 1,
-    scale: 1,
-    y: 0,
-    transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
+  const str = parseFloat(value.toPrecision(10)).toString();
+  // Truncate if the number of digits exceeds the display limit
+  if (str.replace(/[^0-9]/g, '').length > MAX_DISPLAY_DIGITS) {
+    return parseFloat(value.toPrecision(8)).toString();
+  }
+  return str;
+}
+
+// ─── Reducer ──────────────────────────────────────────────────────────────────
+
+const initialState: CalcState = {
+  display: '0',
+  prev: '',
+  operator: null,
+  waitingForOperand: false,
+  hasResult: false,
+};
+
+function calcReducer(state: CalcState, action: CalcAction): CalcState {
+  switch (action.type) {
+    case 'DIGIT': {
+      const { payload: digit } = action;
+
+      // After a result, start fresh unless continuing with a new number
+      if (state.hasResult && !state.waitingForOperand) {
+        return {
+          ...initialState,
+          display: digit === '0' ? '0' : digit,
+        };
+      }
+
+      if (state.waitingForOperand) {
+        return {
+          ...state,
+          display: digit,
+          waitingForOperand: false,
+          hasResult: false,
+        };
+      }
+
+      // Guard against going beyond display capacity
+      const currentDigits = state.display.replace(/[^0-9]/g, '').length;
+      if (currentDigits >= MAX_DISPLAY_DIGITS) return state;
+
+      const newDisplay = state.display === '0' && digit !== '.' ? digit : state.display + digit;
+
+      return { ...state, display: newDisplay, hasResult: false };
+    }
+
+    case 'DECIMAL': {
+      if (state.waitingForOperand) {
+        return { ...state, display: '0.', waitingForOperand: false };
+      }
+      if (state.display.includes('.')) return state;
+      return { ...state, display: state.display + '.', hasResult: false };
+    }
+
+    case 'OPERATOR': {
+      const { payload: operator } = action;
+      const current = parseFloat(state.display);
+
+      // Chain operators: evaluate the pending operation first
+      if (state.operator && !state.waitingForOperand) {
+        const prev = parseFloat(state.prev);
+        const result = applyOperator(prev, current, state.operator);
+        const resultStr = formatResult(result);
+        return {
+          ...state,
+          display: resultStr,
+          prev: resultStr,
+          operator,
+          waitingForOperand: true,
+          hasResult: false,
+        };
+      }
+
+      return {
+        ...state,
+        prev: state.display,
+        operator,
+        waitingForOperand: true,
+        hasResult: false,
+      };
+    }
+
+    case 'EQUALS': {
+      if (!state.operator || state.waitingForOperand) return state;
+
+      const a = parseFloat(state.prev);
+      const b = parseFloat(state.display);
+      const result = applyOperator(a, b, state.operator);
+      const resultStr = formatResult(result);
+
+      return {
+        ...initialState,
+        display: resultStr,
+        hasResult: true,
+      };
+    }
+
+    case 'CLEAR':
+      return { ...initialState };
+
+    case 'TOGGLE_SIGN': {
+      if (state.display === '0' || state.display === 'Error') return state;
+      const toggled = state.display.startsWith('-') ? state.display.slice(1) : '-' + state.display;
+      return { ...state, display: toggled };
+    }
+
+    case 'PERCENT': {
+      const num = parseFloat(state.display);
+      if (isNaN(num)) return state;
+      return { ...state, display: formatResult(num / 100), hasResult: false };
+    }
+
+    case 'BACKSPACE': {
+      if (state.waitingForOperand || state.hasResult) return state;
+      if (state.display.length <= 1 || state.display === 'Error') {
+        return { ...state, display: '0' };
+      }
+      return { ...state, display: state.display.slice(0, -1) };
+    }
+
+    default:
+      return state;
+  }
+}
+
+// ─── Button press animation ───────────────────────────────────────────────────
+
+const TAP_ANIMATION = { scale: 0.92 } as const;
+
+const SPRING_TRANSITION = {
+  type: 'spring',
+  stiffness: 500,
+  damping: 22,
+  mass: 0.8,
+} as const;
+
+// ─── Key definitions ──────────────────────────────────────────────────────────
+
+interface CalcKey {
+  label: string;
+  ariaLabel: string;
+  variant: 'function' | 'operator' | 'digit' | 'equals';
+  wide?: boolean;
+  action: CalcAction;
+}
+
+const KEYS: CalcKey[] = [
+  { label: 'AC', ariaLabel: 'Clear', variant: 'function', action: { type: 'CLEAR' } },
+  { label: '+/−', ariaLabel: 'Toggle sign', variant: 'function', action: { type: 'TOGGLE_SIGN' } },
+  { label: '%', ariaLabel: 'Percent', variant: 'function', action: { type: 'PERCENT' } },
+  {
+    label: '÷',
+    ariaLabel: 'Divide',
+    variant: 'operator',
+    action: { type: 'OPERATOR', payload: '÷' },
   },
-};
 
-const gridVariants = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.03, delayChildren: 0.15 } },
-};
+  { label: '7', ariaLabel: '7', variant: 'digit', action: { type: 'DIGIT', payload: '7' } },
+  { label: '8', ariaLabel: '8', variant: 'digit', action: { type: 'DIGIT', payload: '8' } },
+  { label: '9', ariaLabel: '9', variant: 'digit', action: { type: 'DIGIT', payload: '9' } },
+  {
+    label: '×',
+    ariaLabel: 'Multiply',
+    variant: 'operator',
+    action: { type: 'OPERATOR', payload: '×' },
+  },
 
-const buttonVariants = {
-  hidden: { opacity: 0, scale: 0.8 },
-  visible: { opacity: 1, scale: 1, transition: { duration: 0.25, ease: 'easeOut' } },
-};
+  { label: '4', ariaLabel: '4', variant: 'digit', action: { type: 'DIGIT', payload: '4' } },
+  { label: '5', ariaLabel: '5', variant: 'digit', action: { type: 'DIGIT', payload: '5' } },
+  { label: '6', ariaLabel: '6', variant: 'digit', action: { type: 'DIGIT', payload: '6' } },
+  {
+    label: '−',
+    ariaLabel: 'Subtract',
+    variant: 'operator',
+    action: { type: 'OPERATOR', payload: '−' },
+  },
+
+  { label: '1', ariaLabel: '1', variant: 'digit', action: { type: 'DIGIT', payload: '1' } },
+  { label: '2', ariaLabel: '2', variant: 'digit', action: { type: 'DIGIT', payload: '2' } },
+  { label: '3', ariaLabel: '3', variant: 'digit', action: { type: 'DIGIT', payload: '3' } },
+  { label: '+', ariaLabel: 'Add', variant: 'operator', action: { type: 'OPERATOR', payload: '+' } },
+
+  {
+    label: '0',
+    ariaLabel: '0',
+    variant: 'digit',
+    wide: true,
+    action: { type: 'DIGIT', payload: '0' },
+  },
+  { label: '.', ariaLabel: 'Decimal point', variant: 'digit', action: { type: 'DECIMAL' } },
+  { label: '=', ariaLabel: 'Equals', variant: 'equals', action: { type: 'EQUALS' } },
+];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export const Calculator = () => {
-  /**
-   * `expression` — the full expression string built up by the user
-   * `display`    — what is shown in the readout (may differ after evaluation)
-   * `justEvaled` — true immediately after pressing "="; next digit starts fresh
-   */
-  const [expression, setExpression] = useState<string>('');
-  const [display, setDisplay] = useState<string>('0');
-  const [justEvaled, setJustEvaled] = useState<boolean>(false);
+export const Calculator: FC = () => {
+  const [state, dispatch] = useReducer(calcReducer, initialState);
 
-  const handleButton = (btn: CalcButton) => {
-    if (btn.kind === 'clear') {
-      setExpression('');
-      setDisplay('0');
-      setJustEvaled(false);
-      return;
-    }
+  const isError = state.display === 'Error';
 
-    if (btn.kind === 'equals') {
-      if (expression === '') return;
-      const result = evaluate(expression);
-      setDisplay(result);
-      setExpression(result === 'Error' ? '' : result);
-      setJustEvaled(true);
-      return;
-    }
-
-    if (btn.kind === 'operator') {
-      // If there's an error on display, reset before applying an operator
-      if (display === 'Error') {
-        setExpression('');
-        setDisplay('0');
-        setJustEvaled(false);
-        return;
-      }
-      // Replace a trailing operator instead of appending a second one
-      const trimmed = expression.replace(/[÷×−+]$/, '');
-      const next = trimmed + btn.value;
-      setExpression(next);
-      setDisplay(btn.value);
-      setJustEvaled(false);
-      return;
-    }
-
-    // Digit
-    if (justEvaled) {
-      // Start a brand-new expression after evaluation
-      setExpression(btn.value);
-      setDisplay(btn.value);
-      setJustEvaled(false);
-      return;
-    }
-
-    // Prevent multiple leading zeros
-    if (btn.value === '0' && expression === '0') return;
-
-    const next = expression === '0' ? btn.value : expression + btn.value;
-    setExpression(next);
-    setDisplay(
-      // Show only the current operand (everything after the last operator)
-      (() => {
-        const parts = next.split(/[÷×−+]/);
-        return parts[parts.length - 1] || btn.value;
-      })(),
-    );
-  };
-
-  const kindClass: Record<ButtonKind, string> = {
-    number: styles.btnNumber,
-    operator: styles.btnOperator,
-    clear: styles.btnClear,
-    equals: styles.btnEquals,
-  };
-
-  const isOperatorActive = (btn: CalcButton) =>
-    OPERATORS.has(display) && display === btn.value;
+  // Shrink font size for long numbers to prevent overflow
+  const displayFontSize =
+    state.display.length > 9 ? '1.8rem' : state.display.length > 6 ? '2.4rem' : '3rem';
 
   return (
-    <section className={styles.section} aria-label="Calculator">
-      <motion.div
-        className={styles.calculator}
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-      >
-        {/* ── Display ── */}
-        <div className={styles.display} aria-live="polite" aria-label={`Result: ${display}`}>
-          <span className={styles.expressionLine}>{expression || ''}</span>
-          <span className={cn(styles.displayValue, display.length > 9 && styles.displayValueSm)}>
-            {display}
-          </span>
+    <motion.div
+      className={styles.calculator}
+      initial={{ opacity: 0, y: 32, scale: 0.97 }}
+      whileInView={{ opacity: 1, y: 0, scale: 1 }}
+      viewport={{ once: true, margin: '-60px' }}
+      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      role="application"
+      aria-label="Calculator"
+    >
+      {/* Display */}
+      <div className={styles.display} aria-live="polite" aria-atomic="true">
+        <div className={styles.expressionRow}>
+          {state.operator && state.prev ? (
+            <span className={styles.expression}>
+              {state.prev} {state.operator}
+            </span>
+          ) : null}
         </div>
-
-        {/* ── Button grid ── */}
-        <motion.div
-          className={styles.grid}
-          role="group"
-          aria-label="Calculator buttons"
-          variants={gridVariants}
-          initial="hidden"
-          animate="visible"
+        <div
+          className={`${styles.displayValue} ${isError ? styles.displayError : ''}`}
+          style={{ fontSize: displayFontSize }}
+          aria-label={`Display: ${state.display}`}
         >
-          {BUTTONS.map((btn) => (
-            <motion.button
-              key={btn.value}
-              className={cn(
-                styles.btn,
-                kindClass[btn.kind],
-                isOperatorActive(btn) && styles.btnOperatorActive,
-              )}
-              onClick={() => handleButton(btn)}
-              aria-label={btn.ariaLabel ?? btn.label}
-              variants={buttonVariants}
-              whileHover={{ scale: 1.06 }}
-              whileTap={{ scale: 0.92 }}
-              transition={{ type: 'spring', stiffness: 420, damping: 22 }}
-            >
-              {btn.label}
-            </motion.button>
-          ))}
-        </motion.div>
-      </motion.div>
-    </section>
+          {state.display}
+        </div>
+      </div>
+
+      {/* Keypad */}
+      <div className={styles.keypad} role="group" aria-label="Calculator keys">
+        {KEYS.map((key) => (
+          <motion.button
+            key={key.ariaLabel}
+            className={[styles.key, styles[key.variant], key.wide ? styles.wide : '']
+              .filter(Boolean)
+              .join(' ')}
+            onClick={() => dispatch(key.action)}
+            aria-label={key.ariaLabel}
+            // ── Press animation ──────────────────────────────────────
+            whileTap={TAP_ANIMATION}
+            transition={SPRING_TRANSITION}
+          >
+            {key.label}
+          </motion.button>
+        ))}
+      </div>
+    </motion.div>
   );
 };
