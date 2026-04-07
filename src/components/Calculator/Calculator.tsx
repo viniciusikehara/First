@@ -1,291 +1,214 @@
-import { useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState } from 'react';
+import { motion } from 'framer-motion';
 
+import { cn } from '@/utils/cn';
 import styles from './Calculator.module.css';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type ButtonKind = 'number' | 'operator' | 'clear' | 'equals';
+
+interface CalcButton {
+  label: string;
+  value: string;
+  kind: ButtonKind;
+  /** Aria-label override for symbol buttons */
+  ariaLabel?: string;
+}
+
+// ─── Button definitions (row-major, 4 × 4) ───────────────────────────────────
+
+const BUTTONS: CalcButton[] = [
+  { label: '7', value: '7', kind: 'number' },
+  { label: '8', value: '8', kind: 'number' },
+  { label: '9', value: '9', kind: 'number' },
+  { label: '÷', value: '÷', kind: 'operator', ariaLabel: 'divide' },
+
+  { label: '4', value: '4', kind: 'number' },
+  { label: '5', value: '5', kind: 'number' },
+  { label: '6', value: '6', kind: 'number' },
+  { label: '×', value: '×', kind: 'operator', ariaLabel: 'multiply' },
+
+  { label: '1', value: '1', kind: 'number' },
+  { label: '2', value: '2', kind: 'number' },
+  { label: '3', value: '3', kind: 'number' },
+  { label: '−', value: '−', kind: 'operator', ariaLabel: 'subtract' },
+
+  { label: 'AC', value: 'AC', kind: 'clear', ariaLabel: 'clear' },
+  { label: '0', value: '0', kind: 'number' },
+  { label: '=', value: '=', kind: 'equals', ariaLabel: 'equals' },
+  { label: '+', value: '+', kind: 'operator', ariaLabel: 'add' },
+];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const OPERATORS = new Set(['÷', '×', '−', '+']);
+
+/** Evaluate an expression string that uses ÷ × − as operator symbols. */
+function evaluate(expression: string): string {
+  // Replace display operators with JS equivalents
+  const normalised = expression
+    .replace(/÷/g, '/')
+    .replace(/×/g, '*')
+    .replace(/−/g, '-');
+
+  try {
+    // eslint-disable-next-line no-new-func
+    const result = new Function(`return (${normalised})`)() as number;
+    if (!isFinite(result)) return 'Error';
+    // Trim floating-point noise (e.g. 0.1 + 0.2 → 0.3)
+    return String(parseFloat(result.toPrecision(12)));
+  } catch {
+    return 'Error';
+  }
+}
 
 // ─── Animation variants ───────────────────────────────────────────────────────
 
-/** Entering value: starts below and fades in, slides up into place */
-const enterVariants = {
-  initial: { opacity: 0, y: 18 },
-  animate: {
+const containerVariants = {
+  hidden: { opacity: 0, scale: 0.92, y: 32 },
+  visible: {
     opacity: 1,
+    scale: 1,
     y: 0,
-    transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
-  },
-  exit: {
-    opacity: 0,
-    y: -14,
-    transition: { duration: 0.16, ease: [0.55, 0, 1, 0.45] },
+    transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
   },
 };
 
-// ─── Calculator logic ─────────────────────────────────────────────────────────
-
-type Operator = '+' | '−' | '×' | '÷';
-
-interface CalcState {
-  /** The left-hand operand (as a display string) */
-  lhs: string;
-  /** The chosen operator */
-  operator: Operator | null;
-  /** The right-hand operand being entered */
-  rhs: string;
-  /** Whether we just pressed = and should start fresh on next digit */
-  justEvaled: boolean;
-}
-
-const INITIAL_STATE: CalcState = {
-  lhs: '0',
-  operator: null,
-  rhs: '',
-  justEvaled: false,
+const gridVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.03, delayChildren: 0.15 } },
 };
 
-/** Converts display operator symbol to a JS operator. */
-function evaluate(lhs: string, operator: Operator, rhs: string): string {
-  const a = parseFloat(lhs);
-  const b = parseFloat(rhs);
-  let result: number;
-  switch (operator) {
-    case '+':
-      result = a + b;
-      break;
-    case '−':
-      result = a - b;
-      break;
-    case '×':
-      result = a * b;
-      break;
-    case '÷':
-      if (b === 0) return 'Error';
-      result = a / b;
-      break;
-  }
-  // Keep it readable: trim long floats to 10 significant digits
-  return parseFloat(result.toPrecision(10)).toString();
-}
+const buttonVariants = {
+  hidden: { opacity: 0, scale: 0.8 },
+  visible: { opacity: 1, scale: 1, transition: { duration: 0.25, ease: 'easeOut' } },
+};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export const Calculator = () => {
-  const [calc, setCalc] = useState<CalcState>(INITIAL_STATE);
-
-  // ── Derived display values ──────────────────────────────────────────────────
-
   /**
-   * The large "result" line — shows the active operand being typed,
-   * or the evaluated result after pressing =.
+   * `expression` — the full expression string built up by the user
+   * `display`    — what is shown in the readout (may differ after evaluation)
+   * `justEvaled` — true immediately after pressing "="; next digit starts fresh
    */
-  const resultDisplay: string = calc.operator ? (calc.rhs === '' ? calc.lhs : calc.rhs) : calc.lhs;
+  const [expression, setExpression] = useState<string>('');
+  const [display, setDisplay] = useState<string>('0');
+  const [justEvaled, setJustEvaled] = useState<boolean>(false);
 
-  /**
-   * The small "expression" line — shows the running expression,
-   * e.g. "12 + " or "12 + 5 =".
-   */
-  const expressionDisplay: string = (() => {
-    if (!calc.operator) return calc.justEvaled ? `${calc.lhs} =` : '';
-    if (calc.rhs === '') return `${calc.lhs} ${calc.operator}`;
-    return `${calc.lhs} ${calc.operator} ${calc.rhs}`;
-  })();
+  const handleButton = (btn: CalcButton) => {
+    if (btn.kind === 'clear') {
+      setExpression('');
+      setDisplay('0');
+      setJustEvaled(false);
+      return;
+    }
 
-  // ── Button handlers ─────────────────────────────────────────────────────────
+    if (btn.kind === 'equals') {
+      if (expression === '') return;
+      const result = evaluate(expression);
+      setDisplay(result);
+      setExpression(result === 'Error' ? '' : result);
+      setJustEvaled(true);
+      return;
+    }
 
-  const handleDigit = useCallback((digit: string) => {
-    setCalc((prev) => {
-      // After evaluation, start a brand-new input
-      if (prev.justEvaled) {
-        return { ...INITIAL_STATE, lhs: digit, justEvaled: false };
+    if (btn.kind === 'operator') {
+      // If there's an error on display, reset before applying an operator
+      if (display === 'Error') {
+        setExpression('');
+        setDisplay('0');
+        setJustEvaled(false);
+        return;
       }
-      if (prev.operator === null) {
-        // Editing lhs
-        const next = prev.lhs === '0' && digit !== '.' ? digit : prev.lhs + digit;
-        return { ...prev, lhs: next };
-      }
-      // Editing rhs
-      const next = prev.rhs === '0' && digit !== '.' ? digit : prev.rhs + digit;
-      return { ...prev, rhs: next };
-    });
-  }, []);
+      // Replace a trailing operator instead of appending a second one
+      const trimmed = expression.replace(/[÷×−+]$/, '');
+      const next = trimmed + btn.value;
+      setExpression(next);
+      setDisplay(btn.value);
+      setJustEvaled(false);
+      return;
+    }
 
-  const handleDecimal = useCallback(() => {
-    setCalc((prev) => {
-      if (prev.justEvaled) {
-        return { ...INITIAL_STATE, lhs: '0.', justEvaled: false };
-      }
-      if (prev.operator === null) {
-        if (prev.lhs.includes('.')) return prev;
-        return { ...prev, lhs: prev.lhs + '.' };
-      }
-      const base = prev.rhs === '' ? '0' : prev.rhs;
-      if (base.includes('.')) return prev;
-      return { ...prev, rhs: base + '.' };
-    });
-  }, []);
+    // Digit
+    if (justEvaled) {
+      // Start a brand-new expression after evaluation
+      setExpression(btn.value);
+      setDisplay(btn.value);
+      setJustEvaled(false);
+      return;
+    }
 
-  const handleOperator = useCallback((op: Operator) => {
-    setCalc((prev) => {
-      // Chain: if there's already a pending operation, evaluate it first
-      if (prev.operator !== null && prev.rhs !== '') {
-        const chained = evaluate(prev.lhs, prev.operator, prev.rhs);
-        return { lhs: chained, operator: op, rhs: '', justEvaled: false };
-      }
-      return { ...prev, operator: op, rhs: '', justEvaled: false };
-    });
-  }, []);
+    // Prevent multiple leading zeros
+    if (btn.value === '0' && expression === '0') return;
 
-  const handleEquals = useCallback(() => {
-    setCalc((prev) => {
-      if (!prev.operator || prev.rhs === '') return prev;
-      const result = evaluate(prev.lhs, prev.operator, prev.rhs);
-      return { lhs: result, operator: null, rhs: '', justEvaled: true };
-    });
-  }, []);
-
-  const handleClear = useCallback(() => {
-    setCalc(INITIAL_STATE);
-  }, []);
-
-  const handleToggleSign = useCallback(() => {
-    setCalc((prev) => {
-      if (prev.operator === null) {
-        const toggled = prev.lhs.startsWith('-')
-          ? prev.lhs.slice(1)
-          : prev.lhs === '0'
-            ? '0'
-            : '-' + prev.lhs;
-        return { ...prev, lhs: toggled };
-      }
-      if (prev.rhs !== '') {
-        const toggled = prev.rhs.startsWith('-') ? prev.rhs.slice(1) : '-' + prev.rhs;
-        return { ...prev, rhs: toggled };
-      }
-      return prev;
-    });
-  }, []);
-
-  const handlePercent = useCallback(() => {
-    setCalc((prev) => {
-      if (prev.operator === null) {
-        const val = parseFloat(prev.lhs) / 100;
-        return { ...prev, lhs: parseFloat(val.toPrecision(10)).toString() };
-      }
-      if (prev.rhs !== '') {
-        const val = parseFloat(prev.rhs) / 100;
-        return { ...prev, rhs: parseFloat(val.toPrecision(10)).toString() };
-      }
-      return prev;
-    });
-  }, []);
-
-  // ─── Button layout ──────────────────────────────────────────────────────────
-
-  type ButtonDef = {
-    label: string;
-    action: () => void;
-    variant?: 'function' | 'operator' | 'equals' | 'digit';
-    wide?: boolean;
+    const next = expression === '0' ? btn.value : expression + btn.value;
+    setExpression(next);
+    setDisplay(
+      // Show only the current operand (everything after the last operator)
+      (() => {
+        const parts = next.split(/[÷×−+]/);
+        return parts[parts.length - 1] || btn.value;
+      })(),
+    );
   };
 
-  const buttons: ButtonDef[][] = [
-    [
-      { label: 'AC', action: handleClear, variant: 'function' },
-      { label: '+/−', action: handleToggleSign, variant: 'function' },
-      { label: '%', action: handlePercent, variant: 'function' },
-      { label: '÷', action: () => handleOperator('÷'), variant: 'operator' },
-    ],
-    [
-      { label: '7', action: () => handleDigit('7'), variant: 'digit' },
-      { label: '8', action: () => handleDigit('8'), variant: 'digit' },
-      { label: '9', action: () => handleDigit('9'), variant: 'digit' },
-      { label: '×', action: () => handleOperator('×'), variant: 'operator' },
-    ],
-    [
-      { label: '4', action: () => handleDigit('4'), variant: 'digit' },
-      { label: '5', action: () => handleDigit('5'), variant: 'digit' },
-      { label: '6', action: () => handleDigit('6'), variant: 'digit' },
-      { label: '−', action: () => handleOperator('−'), variant: 'operator' },
-    ],
-    [
-      { label: '1', action: () => handleDigit('1'), variant: 'digit' },
-      { label: '2', action: () => handleDigit('2'), variant: 'digit' },
-      { label: '3', action: () => handleDigit('3'), variant: 'digit' },
-      { label: '+', action: () => handleOperator('+'), variant: 'operator' },
-    ],
-    [
-      { label: '0', action: () => handleDigit('0'), variant: 'digit', wide: true },
-      { label: '.', action: handleDecimal, variant: 'digit' },
-      { label: '=', action: handleEquals, variant: 'equals' },
-    ],
-  ];
+  const kindClass: Record<ButtonKind, string> = {
+    number: styles.btnNumber,
+    operator: styles.btnOperator,
+    clear: styles.btnClear,
+    equals: styles.btnEquals,
+  };
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
+  const isOperatorActive = (btn: CalcButton) =>
+    OPERATORS.has(display) && display === btn.value;
 
   return (
-    <motion.div
-      className={styles.calculator}
-      initial={{ opacity: 0, y: 32, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.6, delay: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      aria-label="Calculator"
-      role="application"
-    >
-      {/* ── Display ──────────────────────────────────────────────────────────── */}
-      <div className={styles.display} aria-live="polite" aria-atomic="true">
-        {/* Expression line */}
-        <div className={styles.expressionRow}>
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.span
-              key={expressionDisplay}
-              className={styles.expression}
-              variants={enterVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              {expressionDisplay || '\u00A0' /* non-breaking space to hold height */}
-            </motion.span>
-          </AnimatePresence>
+    <section className={styles.section} aria-label="Calculator">
+      <motion.div
+        className={styles.calculator}
+        variants={containerVariants}
+        initial="hidden"
+        animate="visible"
+      >
+        {/* ── Display ── */}
+        <div className={styles.display} aria-live="polite" aria-label={`Result: ${display}`}>
+          <span className={styles.expressionLine}>{expression || ''}</span>
+          <span className={cn(styles.displayValue, display.length > 9 && styles.displayValueSm)}>
+            {display}
+          </span>
         </div>
 
-        {/* Result line */}
-        <div className={styles.resultRow}>
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.span
-              key={resultDisplay}
-              className={styles.result}
-              variants={enterVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
+        {/* ── Button grid ── */}
+        <motion.div
+          className={styles.grid}
+          role="group"
+          aria-label="Calculator buttons"
+          variants={gridVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          {BUTTONS.map((btn) => (
+            <motion.button
+              key={btn.value}
+              className={cn(
+                styles.btn,
+                kindClass[btn.kind],
+                isOperatorActive(btn) && styles.btnOperatorActive,
+              )}
+              onClick={() => handleButton(btn)}
+              aria-label={btn.ariaLabel ?? btn.label}
+              variants={buttonVariants}
+              whileHover={{ scale: 1.06 }}
+              whileTap={{ scale: 0.92 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 22 }}
             >
-              {resultDisplay}
-            </motion.span>
-          </AnimatePresence>
-        </div>
-      </div>
-
-      {/* ── Keypad ───────────────────────────────────────────────────────────── */}
-      <div className={styles.keypad} role="group" aria-label="Calculator buttons">
-        {buttons.map((row, rowIdx) => (
-          <div key={rowIdx} className={styles.row}>
-            {row.map((btn) => (
-              <motion.button
-                key={btn.label}
-                className={[styles.key, styles[btn.variant ?? 'digit'], btn.wide ? styles.wide : '']
-                  .filter(Boolean)
-                  .join(' ')}
-                onClick={btn.action}
-                whileTap={{ scale: 0.91 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                aria-label={btn.label}
-              >
-                {btn.label}
-              </motion.button>
-            ))}
-          </div>
-        ))}
-      </div>
-    </motion.div>
+              {btn.label}
+            </motion.button>
+          ))}
+        </motion.div>
+      </motion.div>
+    </section>
   );
 };
