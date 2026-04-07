@@ -1,152 +1,141 @@
-/* ─── Shell ──────────────────────────────────────────────────────────────────*/
-.calculator {
-  width: 100%;
-  max-width: 340px;
-  border-radius: var(--radius-lg);
-  background-color: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-lg);
-  overflow: hidden;
-  /* Prevent layout shift when keys scale during whileTap */
-  isolation: isolate;
+.section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem var(--container-padding) 5rem;
 }
 
-/* ─── Display ────────────────────────────────────────────────────────────────*/
-.display {
+.wrapper {
+  width: 100%;
+  max-width: 360px;
   background-color: var(--color-bg-surface);
-  border-bottom: 1px solid var(--color-border);
-  padding: 1.25rem 1.5rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease;
+}
+
+/* ── Display ── */
+.display {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  padding: 1.25rem 1.5rem 1rem;
   gap: 0.25rem;
-  min-height: 108px;
+  background-color: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
   transition: background-color 0.3s ease;
-}
-
-.expressionRow {
-  min-height: 1.4rem;
-  display: flex;
-  justify-content: flex-end;
+  min-height: 5.5rem;
 }
 
 .expression {
   font-size: 0.85rem;
+  font-family: var(--font-mono);
   color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  letter-spacing: 0.02em;
-  user-select: none;
-}
-
-.displayValue {
-  font-family: var(--font-mono);
-  font-weight: 300;
-  color: var(--color-text);
-  line-height: 1;
-  text-align: right;
+  min-height: 1.2em;
   word-break: break-all;
-  /* Smooth font-size transition when digits grow/shrink */
-  transition:
-    font-size 0.15s ease,
-    color 0.3s ease;
-  user-select: none;
+  text-align: right;
 }
 
-.displayError {
-  color: #f87171;
-  font-size: 1.8rem !important;
+.result {
+  font-size: 2.4rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  word-break: break-all;
+  text-align: right;
+  transition: color 0.3s ease;
 }
 
-/* ─── Keypad grid ────────────────────────────────────────────────────────────*/
-.keypad {
+/* ── Button grid ── */
+.grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 1px;
   background-color: var(--color-border);
+  /* Prevent the gap lines from shifting during scale animations */
+  isolation: isolate;
 }
 
-/* ─── Individual key ─────────────────────────────────────────────────────────*/
-.key {
-  /*
-   * Use will-change to promote to its own compositor layer so the scale
-   * transform never triggers a layout recalculation on surrounding elements.
-   */
-  will-change: transform;
+/* ── Individual button ── */
+.btn {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--font-sans);
-  font-size: 1.2rem;
-  font-weight: 500;
   height: 72px;
+  font-size: 1.15rem;
+  font-weight: 600;
+  font-family: inherit;
+  background-color: var(--color-bg-surface);
+  color: var(--color-text);
   border: none;
-  outline: none;
   cursor: pointer;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
+  outline: none;
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast);
+  /* Reserve the layer so transform during whileTap won't cause reflow */
+  will-change: transform;
+  /* Clip the button to its own bounds so scaling never bleeds into siblings */
+  overflow: hidden;
+  /* z-index lifted on press via the Framer Motion animation; set a baseline */
+  z-index: 0;
 }
 
-.key:focus-visible {
+.btn:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: -2px;
   z-index: 1;
 }
 
-/* Span 2 columns for the wide "0" key */
-.wide {
+.btn:hover:not(:disabled) {
+  background-color: var(--color-bg-elevated);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Variant: operator ( ÷ × − + ) */
+.btnOperator {
+  color: var(--color-accent);
+  font-size: 1.3rem;
+}
+
+.btnOperator:hover:not(:disabled) {
+  background-color: var(--color-bg-elevated);
+  color: var(--color-accent-hover);
+}
+
+/* Variant: equals */
+.btnEquals {
+  background-color: var(--color-accent);
+  color: #fff;
+}
+
+.btnEquals:hover:not(:disabled) {
+  background-color: var(--color-accent-hover);
+}
+
+/* Variant: utility ( AC, +/-, % ) */
+.btnUtility {
+  color: var(--color-text-muted);
+  font-size: 1rem;
+}
+
+.btnUtility:hover:not(:disabled) {
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+/* Wide key spanning two columns */
+.btnWide {
   grid-column: span 2;
-  justify-content: flex-start;
-  padding-left: 1.75rem;
 }
-
-/* ─── Variant: digit ─────────────────────────────────────────────────────────*/
-.digit {
-  background-color: var(--color-bg-elevated);
-  color: var(--color-text);
-}
-
-.digit:hover {
-  background-color: var(--color-bg-surface);
-}
-
-/* ─── Variant: function (AC, +/−, %) ────────────────────────────────────────*/
-.function {
-  background-color: var(--color-bg-surface);
-  color: var(--color-text);
-  font-weight: 600;
-}
-
-.function:hover {
-  background-color: var(--color-bg-elevated);
-}
-
-/* ─── Variant: operator (÷ × − +) ───────────────────────────────────────────*/
-.operator {
-  background-color: var(--color-accent);
-  color: #fff;
-  font-size: 1.35rem;
-  font-weight: 400;
-}
-
-.operator:hover {
-  background-color: var(--color-accent-hover);
-}
-
-/* ─── Variant: equals ────────────────────────────────────────────────────────*/
-.equals {
-  background-color: var(--color-accent);
-  color: #fff;
-  font-size: 1.35rem;
-  font-weight: 400;
-}
-
-.equals:hover {
-  background-color: var(--color-accent-hover);
-}
-
-/* ─── Dark-mode adjustments ──────────────────────────────────────────────────*/
-/* Variables are already swapped at .appWrapper.dark level in App.module.css  */

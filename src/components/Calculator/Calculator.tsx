@@ -1,305 +1,277 @@
-import { useReducer } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 
-import type { FC } from 'react';
 import styles from './Calculator.module.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Operator = '+' | '−' | '×' | '÷';
-
-interface CalcState {
-  display: string;
-  prev: string;
-  operator: Operator | null;
-  waitingForOperand: boolean;
-  hasResult: boolean;
-}
-
-type CalcAction =
-  | { type: 'DIGIT'; payload: string }
-  | { type: 'DECIMAL' }
-  | { type: 'OPERATOR'; payload: Operator }
-  | { type: 'EQUALS' }
-  | { type: 'CLEAR' }
-  | { type: 'TOGGLE_SIGN' }
-  | { type: 'PERCENT' }
-  | { type: 'BACKSPACE' };
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const MAX_DISPLAY_DIGITS = 12;
-
-function applyOperator(a: number, b: number, op: Operator): number {
-  switch (op) {
-    case '+':
-      return a + b;
-    case '−':
-      return a - b;
-    case '×':
-      return a * b;
-    case '÷':
-      return b !== 0 ? a / b : NaN;
-  }
-}
-
-function formatResult(value: number): string {
-  if (!isFinite(value)) return 'Error';
-  if (isNaN(value)) return 'Error';
-
-  const str = parseFloat(value.toPrecision(10)).toString();
-  // Truncate if the number of digits exceeds the display limit
-  if (str.replace(/[^0-9]/g, '').length > MAX_DISPLAY_DIGITS) {
-    return parseFloat(value.toPrecision(8)).toString();
-  }
-  return str;
-}
-
-// ─── Reducer ──────────────────────────────────────────────────────────────────
-
-const initialState: CalcState = {
-  display: '0',
-  prev: '',
-  operator: null,
-  waitingForOperand: false,
-  hasResult: false,
-};
-
-function calcReducer(state: CalcState, action: CalcAction): CalcState {
-  switch (action.type) {
-    case 'DIGIT': {
-      const { payload: digit } = action;
-
-      // After a result, start fresh unless continuing with a new number
-      if (state.hasResult && !state.waitingForOperand) {
-        return {
-          ...initialState,
-          display: digit === '0' ? '0' : digit,
-        };
-      }
-
-      if (state.waitingForOperand) {
-        return {
-          ...state,
-          display: digit,
-          waitingForOperand: false,
-          hasResult: false,
-        };
-      }
-
-      // Guard against going beyond display capacity
-      const currentDigits = state.display.replace(/[^0-9]/g, '').length;
-      if (currentDigits >= MAX_DISPLAY_DIGITS) return state;
-
-      const newDisplay = state.display === '0' && digit !== '.' ? digit : state.display + digit;
-
-      return { ...state, display: newDisplay, hasResult: false };
-    }
-
-    case 'DECIMAL': {
-      if (state.waitingForOperand) {
-        return { ...state, display: '0.', waitingForOperand: false };
-      }
-      if (state.display.includes('.')) return state;
-      return { ...state, display: state.display + '.', hasResult: false };
-    }
-
-    case 'OPERATOR': {
-      const { payload: operator } = action;
-      const current = parseFloat(state.display);
-
-      // Chain operators: evaluate the pending operation first
-      if (state.operator && !state.waitingForOperand) {
-        const prev = parseFloat(state.prev);
-        const result = applyOperator(prev, current, state.operator);
-        const resultStr = formatResult(result);
-        return {
-          ...state,
-          display: resultStr,
-          prev: resultStr,
-          operator,
-          waitingForOperand: true,
-          hasResult: false,
-        };
-      }
-
-      return {
-        ...state,
-        prev: state.display,
-        operator,
-        waitingForOperand: true,
-        hasResult: false,
-      };
-    }
-
-    case 'EQUALS': {
-      if (!state.operator || state.waitingForOperand) return state;
-
-      const a = parseFloat(state.prev);
-      const b = parseFloat(state.display);
-      const result = applyOperator(a, b, state.operator);
-      const resultStr = formatResult(result);
-
-      return {
-        ...initialState,
-        display: resultStr,
-        hasResult: true,
-      };
-    }
-
-    case 'CLEAR':
-      return { ...initialState };
-
-    case 'TOGGLE_SIGN': {
-      if (state.display === '0' || state.display === 'Error') return state;
-      const toggled = state.display.startsWith('-') ? state.display.slice(1) : '-' + state.display;
-      return { ...state, display: toggled };
-    }
-
-    case 'PERCENT': {
-      const num = parseFloat(state.display);
-      if (isNaN(num)) return state;
-      return { ...state, display: formatResult(num / 100), hasResult: false };
-    }
-
-    case 'BACKSPACE': {
-      if (state.waitingForOperand || state.hasResult) return state;
-      if (state.display.length <= 1 || state.display === 'Error') {
-        return { ...state, display: '0' };
-      }
-      return { ...state, display: state.display.slice(0, -1) };
-    }
-
-    default:
-      return state;
-  }
-}
-
-// ─── Button press animation ───────────────────────────────────────────────────
-
-const TAP_ANIMATION = { scale: 0.92 } as const;
-
-const SPRING_TRANSITION = {
-  type: 'spring',
-  stiffness: 500,
-  damping: 22,
-  mass: 0.8,
-} as const;
-
-// ─── Key definitions ──────────────────────────────────────────────────────────
+type KeyKind = 'number' | 'operator' | 'equals' | 'utility';
 
 interface CalcKey {
   label: string;
-  ariaLabel: string;
-  variant: 'function' | 'operator' | 'digit' | 'equals';
+  value: string;
+  kind: KeyKind;
   wide?: boolean;
-  action: CalcAction;
+  ariaLabel?: string;
 }
 
+// ─── Key layout (standard iOS-style 4×5 grid) ────────────────────────────────
+
 const KEYS: CalcKey[] = [
-  { label: 'AC', ariaLabel: 'Clear', variant: 'function', action: { type: 'CLEAR' } },
-  { label: '+/−', ariaLabel: 'Toggle sign', variant: 'function', action: { type: 'TOGGLE_SIGN' } },
-  { label: '%', ariaLabel: 'Percent', variant: 'function', action: { type: 'PERCENT' } },
-  {
-    label: '÷',
-    ariaLabel: 'Divide',
-    variant: 'operator',
-    action: { type: 'OPERATOR', payload: '÷' },
-  },
+  { label: 'AC', value: 'clear', kind: 'utility', ariaLabel: 'Clear' },
+  { label: '+/−', value: 'sign', kind: 'utility', ariaLabel: 'Toggle sign' },
+  { label: '%', value: 'percent', kind: 'utility', ariaLabel: 'Percent' },
+  { label: '÷', value: '/', kind: 'operator', ariaLabel: 'Divide' },
 
-  { label: '7', ariaLabel: '7', variant: 'digit', action: { type: 'DIGIT', payload: '7' } },
-  { label: '8', ariaLabel: '8', variant: 'digit', action: { type: 'DIGIT', payload: '8' } },
-  { label: '9', ariaLabel: '9', variant: 'digit', action: { type: 'DIGIT', payload: '9' } },
-  {
-    label: '×',
-    ariaLabel: 'Multiply',
-    variant: 'operator',
-    action: { type: 'OPERATOR', payload: '×' },
-  },
+  { label: '7', value: '7', kind: 'number' },
+  { label: '8', value: '8', kind: 'number' },
+  { label: '9', value: '9', kind: 'number' },
+  { label: '×', value: '*', kind: 'operator', ariaLabel: 'Multiply' },
 
-  { label: '4', ariaLabel: '4', variant: 'digit', action: { type: 'DIGIT', payload: '4' } },
-  { label: '5', ariaLabel: '5', variant: 'digit', action: { type: 'DIGIT', payload: '5' } },
-  { label: '6', ariaLabel: '6', variant: 'digit', action: { type: 'DIGIT', payload: '6' } },
-  {
-    label: '−',
-    ariaLabel: 'Subtract',
-    variant: 'operator',
-    action: { type: 'OPERATOR', payload: '−' },
-  },
+  { label: '4', value: '4', kind: 'number' },
+  { label: '5', value: '5', kind: 'number' },
+  { label: '6', value: '6', kind: 'number' },
+  { label: '−', value: '-', kind: 'operator', ariaLabel: 'Subtract' },
 
-  { label: '1', ariaLabel: '1', variant: 'digit', action: { type: 'DIGIT', payload: '1' } },
-  { label: '2', ariaLabel: '2', variant: 'digit', action: { type: 'DIGIT', payload: '2' } },
-  { label: '3', ariaLabel: '3', variant: 'digit', action: { type: 'DIGIT', payload: '3' } },
-  { label: '+', ariaLabel: 'Add', variant: 'operator', action: { type: 'OPERATOR', payload: '+' } },
+  { label: '1', value: '1', kind: 'number' },
+  { label: '2', value: '2', kind: 'number' },
+  { label: '3', value: '3', kind: 'number' },
+  { label: '+', value: '+', kind: 'operator', ariaLabel: 'Add' },
 
-  {
-    label: '0',
-    ariaLabel: '0',
-    variant: 'digit',
-    wide: true,
-    action: { type: 'DIGIT', payload: '0' },
-  },
-  { label: '.', ariaLabel: 'Decimal point', variant: 'digit', action: { type: 'DECIMAL' } },
-  { label: '=', ariaLabel: 'Equals', variant: 'equals', action: { type: 'EQUALS' } },
+  { label: '0', value: '0', kind: 'number', wide: true },
+  { label: '.', value: '.', kind: 'number', ariaLabel: 'Decimal point' },
+  { label: '=', value: 'equals', kind: 'equals', ariaLabel: 'Equals' },
 ];
+
+// ─── Framer Motion variants ───────────────────────────────────────────────────
+
+/**
+ * whileTap: scale down to 0.92 to simulate a physical key press.
+ * Spring transition keeps the bounce-back snappy and natural.
+ * `z-index` is raised while pressed so the scaled button visually
+ * sits on top of adjacent keys, preventing clipping artifacts.
+ */
+const tapAnimation = {
+  scale: 0.92,
+  zIndex: 1,
+} as const;
+
+const springTransition = {
+  type: 'spring',
+  stiffness: 500,
+  damping: 30,
+  mass: 0.6,
+} as const;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const OPERATORS = new Set(['/', '*', '-', '+']);
+const MAX_DISPLAY_LENGTH = 12;
+
+function trimDisplay(value: string): string {
+  if (value.length <= MAX_DISPLAY_LENGTH) return value;
+  const num = parseFloat(value);
+  if (isNaN(num)) return value.slice(0, MAX_DISPLAY_LENGTH);
+  return num.toExponential(4);
+}
+
+// ─── State machine ────────────────────────────────────────────────────────────
+
+interface CalcState {
+  /** The value shown in the main (result) display */
+  display: string;
+  /** The secondary expression line shown above the result */
+  expression: string;
+  /** The accumulated left-hand operand (raw string) */
+  operand: string;
+  /** The pending operator */
+  operator: string | null;
+  /** True right after = was pressed, so next digit starts a fresh input */
+  justEvaluated: boolean;
+}
+
+const INITIAL_STATE: CalcState = {
+  display: '0',
+  expression: '',
+  operand: '',
+  operator: null,
+  justEvaluated: false,
+};
+
+function evaluate(a: string, op: string, b: string): string {
+  const x = parseFloat(a);
+  const y = parseFloat(b);
+  if (isNaN(x) || isNaN(y)) return '0';
+  let result: number;
+  switch (op) {
+    case '+':
+      result = x + y;
+      break;
+    case '-':
+      result = x - y;
+      break;
+    case '*':
+      result = x * y;
+      break;
+    case '/':
+      result = y === 0 ? NaN : x / y;
+      break;
+    default:
+      result = y;
+  }
+  if (!isFinite(result)) return 'Error';
+  // Avoid floating-point noise by rounding to 10 sig-figs
+  return parseFloat(result.toPrecision(10)).toString();
+}
+
+function calcReducer(state: CalcState, value: string): CalcState {
+  const { display, expression, operand, operator, justEvaluated } = state;
+
+  // ── Clear ──
+  if (value === 'clear') {
+    return { ...INITIAL_STATE };
+  }
+
+  // ── Digit or decimal ──
+  if (!isNaN(Number(value)) || value === '.') {
+    // Prevent multiple decimals
+    if (value === '.' && display.includes('.')) return state;
+
+    const newDisplay =
+      display === '0' || justEvaluated ? (value === '.' ? '0.' : value) : display + value;
+
+    return {
+      ...state,
+      display: newDisplay,
+      expression: justEvaluated ? '' : expression,
+      justEvaluated: false,
+    };
+  }
+
+  // ── Percent ──
+  if (value === 'percent') {
+    const num = parseFloat(display) / 100;
+    const result = parseFloat(num.toPrecision(10)).toString();
+    return { ...state, display: result, expression: `${display}%`, justEvaluated: true };
+  }
+
+  // ── Toggle sign ──
+  if (value === 'sign') {
+    if (display === '0' || display === 'Error') return state;
+    const toggled = display.startsWith('-') ? display.slice(1) : '-' + display;
+    return { ...state, display: toggled };
+  }
+
+  // ── Operator ──
+  if (OPERATORS.has(value)) {
+    const symbolMap: Record<string, string> = { '/': '÷', '*': '×', '-': '−', '+': '+' };
+    const symbol = symbolMap[value] ?? value;
+
+    if (operator && !justEvaluated) {
+      // Chain: evaluate previous operation first
+      const result = evaluate(operand, operator, display);
+      return {
+        display: result,
+        expression: `${result} ${symbol}`,
+        operand: result,
+        operator: value,
+        justEvaluated: false,
+      };
+    }
+
+    return {
+      ...state,
+      expression: `${display} ${symbol}`,
+      operand: display,
+      operator: value,
+      justEvaluated: false,
+    };
+  }
+
+  // ── Equals ──
+  if (value === 'equals') {
+    if (!operator) return state;
+    const result = evaluate(operand, operator, display);
+    const symbolMap: Record<string, string> = { '/': '÷', '*': '×', '-': '−', '+': '+' };
+    const symbol = symbolMap[operator] ?? operator;
+    return {
+      display: result,
+      expression: `${operand} ${symbol} ${display} =`,
+      operand: '',
+      operator: null,
+      justEvaluated: true,
+    };
+  }
+
+  return state;
+}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export const Calculator: FC = () => {
-  const [state, dispatch] = useReducer(calcReducer, initialState);
+export const Calculator = () => {
+  const [state, setState] = useState<CalcState>(INITIAL_STATE);
 
-  const isError = state.display === 'Error';
+  const handleKey = (value: string) => {
+    setState((prev) => calcReducer(prev, value));
+  };
 
-  // Shrink font size for long numbers to prevent overflow
-  const displayFontSize =
-    state.display.length > 9 ? '1.8rem' : state.display.length > 6 ? '2.4rem' : '3rem';
+  const kindToClass: Record<KeyKind, string> = {
+    number: '',
+    operator: styles.btnOperator,
+    equals: styles.btnEquals,
+    utility: styles.btnUtility,
+  };
 
   return (
-    <motion.div
-      className={styles.calculator}
-      initial={{ opacity: 0, y: 32, scale: 0.97 }}
-      whileInView={{ opacity: 1, y: 0, scale: 1 }}
-      viewport={{ once: true, margin: '-60px' }}
-      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      role="application"
-      aria-label="Calculator"
-    >
-      {/* Display */}
-      <div className={styles.display} aria-live="polite" aria-atomic="true">
-        <div className={styles.expressionRow}>
-          {state.operator && state.prev ? (
-            <span className={styles.expression}>
-              {state.prev} {state.operator}
-            </span>
-          ) : null}
+    <section className={styles.section} aria-label="Calculator">
+      <motion.div
+        className={styles.wrapper}
+        initial={{ opacity: 0, y: 32, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      >
+        {/* ── Display ── */}
+        <div className={styles.display} aria-live="polite" aria-atomic="true">
+          <span className={styles.expression} aria-label="Expression">
+            {state.expression}
+          </span>
+          <span className={styles.result} aria-label="Result">
+            {trimDisplay(state.display)}
+          </span>
         </div>
-        <div
-          className={`${styles.displayValue} ${isError ? styles.displayError : ''}`}
-          style={{ fontSize: displayFontSize }}
-          aria-label={`Display: ${state.display}`}
-        >
-          {state.display}
-        </div>
-      </div>
 
-      {/* Keypad */}
-      <div className={styles.keypad} role="group" aria-label="Calculator keys">
-        {KEYS.map((key) => (
-          <motion.button
-            key={key.ariaLabel}
-            className={[styles.key, styles[key.variant], key.wide ? styles.wide : '']
-              .filter(Boolean)
-              .join(' ')}
-            onClick={() => dispatch(key.action)}
-            aria-label={key.ariaLabel}
-            // ── Press animation ──────────────────────────────────────
-            whileTap={TAP_ANIMATION}
-            transition={SPRING_TRANSITION}
-          >
-            {key.label}
-          </motion.button>
-        ))}
-      </div>
-    </motion.div>
+        {/* ── Key grid ── */}
+        <div className={styles.grid} role="group" aria-label="Calculator keys">
+          {KEYS.map((key) => {
+            const extraClass = kindToClass[key.kind];
+            const wideClass = key.wide ? styles.btnWide : '';
+            const className = [styles.btn, extraClass, wideClass].filter(Boolean).join(' ');
+
+            return (
+              <motion.button
+                key={key.value + (key.wide ? '-wide' : '')}
+                type="button"
+                className={className}
+                onClick={() => handleKey(key.value)}
+                aria-label={key.ariaLabel ?? key.label}
+                /**
+                 * whileTap drives the press animation:
+                 *   • scale 0.92  → satisfies "scale down slightly on press"
+                 *   • zIndex 1    → pressed key stays above siblings visually
+                 *
+                 * The spring transition provides the bounce-back so it feels
+                 * snappy on both mouse click AND touch (Framer Motion handles
+                 * pointer/touch events uniformly via the Pointer Events API).
+                 */
+                whileTap={tapAnimation}
+                transition={springTransition}
+              >
+                {key.label}
+              </motion.button>
+            );
+          })}
+        </div>
+      </motion.div>
+    </section>
   );
 };

@@ -40,14 +40,14 @@ export const HeroSection = () => {
             <Badge label="v1.0.0 — Now Live 🎉" />
           </motion.div>
 
-          <motion.h1 className={styles.heading} variants={itemVariants}>
-            Build faster with <span className={styles.highlight}>First Project</span>
-          </motion.h1>
+        <motion.h1 className={styles.heading} variants={itemVariants}>
+          Build faster with <span className={styles.highlight}>First Project</span>
+        </motion.h1>
 
-          <motion.p className={styles.subheading} variants={itemVariants}>
-            A production-ready React + TypeScript starter with Framer Motion animations, CSS
-            Modules, and Vite — so you can ship beautiful products without the boilerplate headache.
-          </motion.p>
+        <motion.p className={styles.subheading} variants={itemVariants}>
+          A production-ready React + TypeScript starter with Framer Motion animations, CSS Modules,
+          and Vite — so you can ship beautiful products without the boilerplate headache.
+        </motion.p>
 
           <motion.div className={styles.actions} variants={itemVariants}>
             <Button variant="primary" size="lg">
