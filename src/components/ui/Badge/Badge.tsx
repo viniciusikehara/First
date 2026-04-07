@@ -7,9 +7,5 @@ interface BadgeProps {
 }
 
 export const Badge: FC<BadgeProps> = ({ label, variant = 'default' }) => {
-  return (
-    <span className={`${styles.badge} ${styles[variant]}`}>
-      {label}
-    </span>
-  );
+  return <span className={`${styles.badge} ${styles[variant]}`}>{label}</span>;
 };
