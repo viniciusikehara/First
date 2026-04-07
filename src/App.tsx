@@ -20,6 +20,7 @@ function App() {
         <Header isDark={isDark} onToggleTheme={toggleTheme} />
         <main className={styles.main}>
           <HeroSection />
+          <Calculator />
           <FeatureGrid />
           <CalculatorSection />
         </main>

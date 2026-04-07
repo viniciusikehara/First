@@ -11,11 +11,12 @@ export function formatDate(
 ): string {
   const d = typeof date === 'string' ? new Date(date) : date;
 
-  const options: Intl.DateTimeFormatOptions = {
+  const optionsMap: Record<string, Intl.DateTimeFormatOptions> = {
     short: { month: 'numeric', day: 'numeric', year: 'numeric' },
     medium: { month: 'short', day: 'numeric', year: 'numeric' },
     long: { month: 'long', day: 'numeric', year: 'numeric' },
-  }[style];
+  };
+  const options = optionsMap[style];
 
   return d.toLocaleDateString(undefined, options);
 }

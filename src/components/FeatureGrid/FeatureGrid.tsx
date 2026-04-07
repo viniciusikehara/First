@@ -64,7 +64,8 @@ export const FeatureGrid = () => {
         >
           <h2 className={styles.sectionTitle}>Everything you need</h2>
           <p className={styles.sectionSubtitle}>
-            A carefully assembled stack so you can focus on building your product, not configuring tooling.
+            A carefully assembled stack so you can focus on building your product, not configuring
+            tooling.
           </p>
         </motion.div>
 
