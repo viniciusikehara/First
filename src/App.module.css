@@ -1,0 +1,28 @@
+.appWrapper {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease;
+}
+
+.appWrapper.dark {
+  --color-bg: #0f0f11;
+  --color-bg-surface: #1a1a1f;
+  --color-bg-elevated: #25252d;
+  --color-text: #f0f0f5;
+  --color-text-muted: #9090a8;
+  --color-border: #2e2e3a;
+  --color-accent: #818cf8;
+  --color-accent-hover: #a5b4fc;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
