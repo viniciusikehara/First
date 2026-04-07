@@ -4,6 +4,7 @@ import { AnimatePresence } from 'framer-motion';
 import { Header } from '@/components/Header/Header';
 import { HeroSection } from '@/components/HeroSection/HeroSection';
 import { FeatureGrid } from '@/components/FeatureGrid/FeatureGrid';
+import { CalculatorSection } from '@/components/CalculatorSection/CalculatorSection';
 import { Footer } from '@/components/Footer/Footer';
 
 import styles from './App.module.css';
@@ -20,6 +21,7 @@ function App() {
         <main className={styles.main}>
           <HeroSection />
           <FeatureGrid />
+          <CalculatorSection />
         </main>
         <Footer />
       </AnimatePresence>
